@@ -76,7 +76,7 @@ from ray import tune
 from ray.tune.integration.keras import TuneReportCheckpointCallback
 from ray.tune.integration.tensorflow import DistributedTrainableCreator
 from ray.tune.logger import TBXLoggerCallback
-from ray.tune import Analysis
+from ray.tune import ExperimentAnalysis
 
 from raytune.search_space import search_space, set_raytune_search_parameters, raytune_num_samples
 from raytune.utils import get_raytune_schedule, get_raytune_search_alg
@@ -675,7 +675,7 @@ def count_skipped(exp_dir):
 @click.option("--metric", help="experiment dir", type=str, default="val_loss")
 @click.option("--mode", help="experiment dir", type=str, default="min")
 def raytune_analysis(exp_dir, save, skip, mode, metric):
-    analysis = Analysis(exp_dir,  default_metric=metric, default_mode=mode)
+    analysis = ExperimentAnalysis(exp_dir,  default_metric=metric, default_mode=mode)
     plot_ray_analysis(analysis, save=save, skip=skip)
     analyze_ray_experiment(exp_dir, default_metric=metric, default_mode=mode)
 
