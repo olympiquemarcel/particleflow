@@ -19,7 +19,7 @@ import shutil
 from functools import partial
 import shlex
 import subprocess
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import logging
 
 import tensorflow as tf

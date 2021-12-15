@@ -496,15 +496,15 @@ def prepare_callbacks(
     history_path = Path(outdir) / "history"
     history_path.mkdir(parents=True, exist_ok=True)
     history_path = str(history_path)
-    cb = CustomCallback(
-        history_path,
-        dataset,
-        dataset_info,
-        plot_freq=callbacks_cfg["plot_freq"],
-        comet_experiment=comet_experiment
-    )
+    # cb = CustomCallback(
+    #     history_path,
+    #     dataset,
+    #     dataset_info,
+    #     plot_freq=callbacks_cfg["plot_freq"],
+    #     comet_experiment=comet_experiment
+    # )
 
-    callbacks += [cb]
+    # callbacks += [cb]
 
     return callbacks
 
