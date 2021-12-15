@@ -4,9 +4,10 @@
 #SBATCH -t 48:00:00
 #SBATCH -N 1
 #SBATCH --tasks-per-node=1
-#SBATCH -p gpu
+#SBATCH -p m100_usr_prod
 #SBATCH --gpus 4
 #SBATCH --account=Ppp4x_5710
+#SBATCH --exclusive
 
 # Job name
 #SBATCH -J train
