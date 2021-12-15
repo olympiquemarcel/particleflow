@@ -1,6 +1,6 @@
 from tensorboard.plugins.hparams import api as hp
 import tensorflow as tf
-import keras_tuner as kt
+# import keras_tuner as kt
 
 from tfmodel.model_setup import make_model, FlattenedCategoricalAccuracy
 from tfmodel.model import PFNetDense
