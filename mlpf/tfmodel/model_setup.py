@@ -1,7 +1,7 @@
 from .model import PFNetTransformer, PFNetDense
 
 import tensorflow as tf
-import tensorflow_addons as tfa
+# import tensorflow_addons as tfa
 import pickle
 import numpy as np
 import os
