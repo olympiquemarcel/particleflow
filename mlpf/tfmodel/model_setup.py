@@ -12,8 +12,8 @@ import io
 import os
 import yaml
 import uuid
-import matplotlib
-import matplotlib.pyplot as plt
+# import matplotlib
+# import matplotlib.pyplot as plt
 import sklearn
 from argparse import Namespace
 import time
@@ -21,7 +21,7 @@ import json
 import random
 import math
 import platform
-import mplhep
+# import mplhep
 from tqdm import tqdm
 from pathlib import Path
 
