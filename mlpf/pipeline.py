@@ -61,7 +61,7 @@ from tfmodel.utils import (
     get_datasets,
 )
 
-from tfmodel.lr_finder import LRFinder
+# from tfmodel.lr_finder import LRFinder
 from tfmodel import hypertuning
 from tfmodel.utils_analysis import (
     plot_ray_analysis,
