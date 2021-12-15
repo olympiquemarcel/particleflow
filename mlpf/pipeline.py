@@ -24,7 +24,7 @@ import logging
 
 import tensorflow as tf
 from tensorflow.keras import mixed_precision
-import tensorflow_addons as tfa
+# import tensorflow_addons as tfa
 import keras_tuner as kt
 
 from tfmodel.data import Dataset

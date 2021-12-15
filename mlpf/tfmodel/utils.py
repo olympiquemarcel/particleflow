@@ -11,7 +11,7 @@ import re
 import logging
 
 import tensorflow as tf
-import tensorflow_addons as tfa
+# import tensorflow_addons as tfa
 import keras_tuner as kt
 
 from tfmodel.data import Dataset
@@ -471,7 +471,9 @@ def get_class_loss(config):
     if config["setup"]["classification_loss_type"] == "categorical_cross_entropy":
         cls_loss = tf.keras.losses.CategoricalCrossentropy(from_logits=False, label_smoothing=config["setup"].get("classification_label_smoothing", 0.0))
     elif config["setup"]["classification_loss_type"] == "sigmoid_focal_crossentropy":
-        cls_loss = tfa.losses.sigmoid_focal_crossentropy
+        #cls_loss = tfa.losses.sigmoid_focal_crossentropy
+        print("SigmoidFocalLoss not supported on Marconi100. Using CategoricalCrossentropy.")
+        cls_loss = tf.keras.losses.CategoricalCrossentropy(from_logits=False, label_smoothing=config["setup"].get("classification_label_smoothing", 0.0))
     else:
         raise KeyError("Unknown classification loss type: {}".format(config["setup"]["classification_loss_type"]))
     return cls_loss
