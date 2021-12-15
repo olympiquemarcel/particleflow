@@ -71,15 +71,15 @@ from tfmodel import hypertuning
 #     count_skipped_configurations,
 # )
 
-import ray
-from ray import tune
-from ray.tune.integration.keras import TuneReportCheckpointCallback
-from ray.tune.integration.tensorflow import DistributedTrainableCreator
-from ray.tune.logger import TBXLoggerCallback
-from ray.tune import Analysis
+# import ray
+# from ray import tune
+# from ray.tune.integration.keras import TuneReportCheckpointCallback
+# from ray.tune.integration.tensorflow import DistributedTrainableCreator
+# from ray.tune.logger import TBXLoggerCallback
+# from ray.tune import Analysis
 
-from raytune.search_space import search_space, set_raytune_search_parameters, raytune_num_samples
-from raytune.utils import get_raytune_schedule, get_raytune_search_alg
+# from raytune.search_space import search_space, set_raytune_search_parameters, raytune_num_samples
+# from raytune.utils import get_raytune_schedule, get_raytune_search_alg
 
 
 def customize_pipeline_test(config):
