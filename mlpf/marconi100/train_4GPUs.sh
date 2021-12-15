@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # Walltime limit
-#SBATCH -t 48:00:00
+#SBATCH -t 4:00:00
 #SBATCH -N 1
 #SBATCH --tasks-per-node=1
 #SBATCH -p m100_usr_prod
@@ -25,8 +25,6 @@ echo "################# End of job submission script. #########################"
 module purge
 module load profile/deeplrn autoload cineca-ai/2.0.0
 nvidia-smi
-
-chprj -d Ppp4x_5710
 
 mkdir $TMPDIR/particleflow
 rsync -ar --exclude={".git","experiments"} . $TMPDIR/particleflow
