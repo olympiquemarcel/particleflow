@@ -8,6 +8,7 @@
 #SBATCH --gpus 4
 #SBATCH --account=Ppp4x_5710
 #SBATCH --exclusive
+#SBATCH --constraint=gpureport
 
 # Job name
 #SBATCH -J train
