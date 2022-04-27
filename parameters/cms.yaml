@@ -53,7 +53,7 @@ setup:
   weights_config:
   lr: 0.001129
   num_events_validation: 1000
-  num_epochs: 200
+  num_epochs: 5
   dtype: float32
   trainable:
   classification_loss_type: sigmoid_focal_crossentropy
@@ -199,26 +199,26 @@ raytune:
 
 train_test_datasets:
   physical: 
-    batch_per_gpu: 32
+    batch_per_gpu: 24
     datasets:
       - cms_pf_ttbar
-      - cms_pf_ztt
+      # - cms_pf_ztt
   gun: 
     batch_per_gpu: 800
     datasets:
-      - cms_pf_single_pi
-      - cms_pf_single_pi0
-      - cms_pf_single_tau
-      - cms_pf_single_electron
-      - cms_pf_single_mu
-      - cms_pf_single_gamma
+      # - cms_pf_single_pi
+      # - cms_pf_single_pi0
+      # - cms_pf_single_tau
+      # - cms_pf_single_electron
+      # - cms_pf_single_mu
+      # - cms_pf_single_gamma
 
 validation_dataset: cms_pf_ttbar
 
 datasets: 
   cms_pf_ttbar:
     version: 1.2.0
-    data_dir:
+    data_dir: /voyager/ceph/users/ewulff/tensorflow_datasets
     manual_dir:
   cms_pf_ztt:
     version: 1.2.0

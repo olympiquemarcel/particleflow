@@ -1,3 +1,9 @@
+import habana_frameworks.tensorflow as htf
+htf.load_habana_module()
+from habana_frameworks.tensorflow.distribute import HPUStrategy
+# from habana_frameworks.tensorflow import load_habana_module
+# load_habana_module()
+
 try:
     import comet_ml
 except ModuleNotFoundError as e:
@@ -112,7 +118,8 @@ def main():
 @click.option("-p", "--prefix", default="", help="prefix to put at beginning of training dir name", type=str)
 @click.option("--plot-freq", default=None, help="plot detailed validation every N epochs", type=int)
 @click.option("--customize", help="customization function", type=str, default=None)
-def train(config, weights, ntrain, ntest, nepochs, recreate, prefix, plot_freq, customize):
+@click.option("-g", "--habana", help="enable training on Habana Gaudi", is_flag=True)
+def train(config, weights, ntrain, ntest, nepochs, recreate, prefix, plot_freq, customize, habana):
 
     try:
         from comet_ml import Experiment
@@ -146,11 +153,16 @@ def train(config, weights, ntrain, ntest, nepochs, recreate, prefix, plot_freq, 
     else:
         outdir = str(Path(weights).parent)
 
-    # Decide tf.distribute.strategy depending on number of available GPUs
-    strategy, num_gpus = get_strategy()
-    #if "CPU" not in strategy.extended.worker_devices[0]:
-    #    nvidia_smi_call = "nvidia-smi --query-gpu=timestamp,name,pci.bus_id,pstate,power.draw,temperature.gpu,utilization.gpu,utilization.memory,memory.total,memory.free,memory.used --format=csv -l 1 -f {}/nvidia_smi_log.csv".format(outdir)
-    #    p = subprocess.Popen(shlex.split(nvidia_smi_call))
+    if habana:
+        logging.info("Using habana_frameworks.tensorflow.distribute.HPUStrategy")
+        strategy = HPUStrategy()
+        num_gpus = 1
+    else:
+        # Decide tf.distribute.strategy depending on number of available GPUs
+        strategy, num_gpus = get_strategy()
+        #if "CPU" not in strategy.extended.worker_devices[0]:
+        #    nvidia_smi_call = "nvidia-smi --query-gpu=timestamp,name,pci.bus_id,pstate,power.draw,temperature.gpu,utilization.gpu,utilization.memory,memory.total,memory.free,memory.used --format=csv -l 1 -f {}/nvidia_smi_log.csv".format(outdir)
+        #    p = subprocess.Popen(shlex.split(nvidia_smi_call))
 
     ds_train, num_train_steps = get_datasets(config["train_test_datasets"], config, num_gpus, "train")
     ds_test, num_test_steps = get_datasets(config["train_test_datasets"], config, num_gpus, "test")
@@ -177,59 +189,60 @@ def train(config, weights, ntrain, ntest, nepochs, recreate, prefix, plot_freq, 
 
     shutil.copy(config_file_path, outdir + "/config.yaml")  # Copy the config file to the train dir for later reference
 
-    with strategy.scope():
-        lr_schedule, optim_callbacks = get_lr_schedule(config, steps=total_steps)
-        opt = get_optimizer(config, lr_schedule)
+    # with strategy.scope():
+    lr_schedule, optim_callbacks = get_lr_schedule(config, steps=total_steps)
+    opt = get_optimizer(config, lr_schedule)
 
-        if config["setup"]["dtype"] == "float16":
-            model_dtype = tf.dtypes.float16
-            policy = mixed_precision.Policy("mixed_float16")
-            mixed_precision.set_global_policy(policy)
-            opt = mixed_precision.LossScaleOptimizer(opt)
-        else:
-            model_dtype = tf.dtypes.float32
+    if config["setup"]["dtype"] == "float16":
+        model_dtype = tf.dtypes.float16
+        policy = mixed_precision.Policy("mixed_float16")
+        mixed_precision.set_global_policy(policy)
+        opt = mixed_precision.LossScaleOptimizer(opt)
+    else:
+        model_dtype = tf.dtypes.float32
 
-        model = make_model(config, model_dtype)
+    model = make_model(config, model_dtype)
 
-        # Build the layers after the element and feature dimensions are specified
-        model.build((1, config["dataset"]["padded_num_elem_size"], config["dataset"]["num_input_features"]))
+    # Build the layers after the element and feature dimensions are specified
+    model.build((1, config["dataset"]["padded_num_elem_size"], config["dataset"]["num_input_features"]))
 
-        initial_epoch = 0
-        if weights:
-            # We need to load the weights in the same trainable configuration as the model was set up
-            configure_model_weights(model, config["setup"].get("weights_config", "all"))
-            model.load_weights(weights, by_name=True)
-            initial_epoch = int(weights.split("/")[-1].split("-")[1])
-        model.build((1, config["dataset"]["padded_num_elem_size"], config["dataset"]["num_input_features"]))
+    initial_epoch = 0
+    if weights:
+        # We need to load the weights in the same trainable configuration as the model was set up
+        configure_model_weights(model, config["setup"].get("weights_config", "all"))
+        model.load_weights(weights, by_name=True)
+        initial_epoch = int(weights.split("/")[-1].split("-")[1])
+    model.build((1, config["dataset"]["padded_num_elem_size"], config["dataset"]["num_input_features"]))
 
-        config = set_config_loss(config, config["setup"]["trainable"])
-        configure_model_weights(model, config["setup"]["trainable"])
-        model.build((1, config["dataset"]["padded_num_elem_size"], config["dataset"]["num_input_features"]))
+    config = set_config_loss(config, config["setup"]["trainable"])
+    configure_model_weights(model, config["setup"]["trainable"])
+    model.build((1, config["dataset"]["padded_num_elem_size"], config["dataset"]["num_input_features"]))
 
-        print("model weights")
-        tw_names = [m.name for m in model.trainable_weights]
-        for w in model.weights:
-            print("layer={} trainable={} shape={} num_weights={}".format(w.name, w.name in tw_names, w.shape, np.prod(w.shape)))
+    print("model weights")
+    tw_names = [m.name for m in model.trainable_weights]
+    for w in model.weights:
+        print("layer={} trainable={} shape={} num_weights={}".format(w.name, w.name in tw_names, w.shape, np.prod(w.shape)))
 
-        loss_dict, loss_weights = get_loss_dict(config)
-        model.compile(
-            loss=loss_dict,
-            optimizer=opt,
-            sample_weight_mode="temporal",
-            loss_weights=loss_weights,
-            metrics={
-                "cls": [
-                    FlattenedCategoricalAccuracy(name="acc_unweighted", dtype=tf.float64),
-                    FlattenedCategoricalAccuracy(use_weights=True, name="acc_weighted", dtype=tf.float64),
-                ] + [
-                    SingleClassRecall(
-                        icls,
-                        name="rec_cls{}".format(icls),
-                        dtype=tf.float64) for icls in range(config["dataset"]["num_output_classes"])
-                ]
-            },
-        )
-        model.summary()
+    loss_dict, loss_weights = get_loss_dict(config)
+    model.compile(
+        loss=loss_dict,
+        optimizer=opt,
+        sample_weight_mode="temporal",
+        loss_weights=loss_weights,
+        metrics={
+            "cls": [
+                FlattenedCategoricalAccuracy(name="acc_unweighted", dtype=tf.float64),
+                FlattenedCategoricalAccuracy(use_weights=True, name="acc_weighted", dtype=tf.float64),
+            ] + [
+                SingleClassRecall(
+                    icls,
+                    name="rec_cls{}".format(icls),
+                    dtype=tf.float64) for icls in range(config["dataset"]["num_output_classes"])
+            ]
+        },
+    )
+    model.summary()
+    # strategy scope end
 
     callbacks = prepare_callbacks(
         config["callbacks"],

@@ -3,7 +3,7 @@
 # PFNetTransformer: the transformer-based model using fast attention
 
 import tensorflow as tf
-from official.nlp.modeling.layers.kernel_attention import KernelAttention
+# from official.nlp.modeling.layers.kernel_attention import KernelAttention
 
 import numpy as np
 from numpy.lib.recfunctions import append_fields

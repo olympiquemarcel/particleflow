@@ -25,10 +25,10 @@ import mplhep
 from tqdm import tqdm
 from pathlib import Path
 
-import tf2onnx
+# import tf2onnx
 import sklearn
 import sklearn.metrics
-import onnxruntime
+# import onnxruntime
 
 from tfmodel.onecycle_scheduler import OneCycleScheduler, MomentumOneCycleScheduler
 from tfmodel.callbacks import CustomTensorBoard
