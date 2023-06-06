@@ -166,7 +166,49 @@ def train(
     seeds,
     comet_exp_name,
 ):
+    return train_function(
+        config,
+        weights,
+        ntrain,
+        ntest,
+        nepochs,
+        recreate,
+        prefix,
+        plot_freq,
+        customize,
+        comet_offline,
+        jobid,
+        horovod_enabled,
+        habana_enabled,
+        benchmark_dir,
+        batch_multiplier,
+        num_cpus,
+        seeds,
+        comet_exp_name,
+    )
 
+
+def train_function(
+    config,
+    weights,
+    ntrain,
+    ntest,
+    nepochs,
+    recreate,
+    prefix,
+    plot_freq,
+    customize,
+    comet_offline,
+    jobid,
+    horovod_enabled,
+    habana_enabled,
+    benchmark_dir,
+    batch_multiplier,
+    num_cpus,
+    seeds,
+    comet_exp_name,
+    hpo_config,
+):
     # tf.debugging.enable_check_numerics()
 
     # Configure GPU threads according to TensorFlow's best practices for optimal model performance
@@ -187,6 +229,11 @@ def train(
     config_file_path = config
     config, config_file_stem = parse_config(config, nepochs=nepochs, weights=weights)
     logging.info(f"loaded config file: {config_file_path}")
+
+    if hpo_config:
+        from raytune.search_space import set_raytune_search_parameters
+
+        config = set_raytune_search_parameters(search_space=hpo_config, config=config)
 
     if plot_freq:
         config["callbacks"]["plot_freq"] = plot_freq
@@ -237,14 +284,6 @@ def train(
         outdir = create_experiment_dir(prefix=prefix + config_file_stem + "_", suffix=platform.node())
         shutil.copy(config_file_path, outdir + "/config.yaml")  # Copy the config file to the train dir for later reference
 
-    experiment = create_comet_experiment(comet_exp_name, comet_offline=comet_offline, outdir=outdir)
-
-    if experiment:
-        experiment.set_name(outdir)
-        experiment.log_code("mlpf/tfmodel/model.py")
-        experiment.log_code("mlpf/tfmodel/utils.py")
-        experiment.log_code(config_file_path)
-
     if jobid is not None:
         with open(f"{outdir}/{jobid}.txt", "w") as f:
             f.write(f"{jobid}\n")
@@ -257,7 +296,12 @@ def train(
     logging.info("num_test_steps: {}".format(ds_test.num_steps()))
     logging.info("epochs: {}, total_train_steps: {}".format(epochs, total_steps))
 
+    experiment = create_comet_experiment(comet_exp_name, comet_offline=comet_offline, outdir=outdir)
     if experiment:
+        experiment.set_name(outdir)
+        experiment.log_code("mlpf/tfmodel/model.py")
+        experiment.log_code("mlpf/tfmodel/utils.py")
+        experiment.log_code(config_file_path)
         experiment.log_parameter("num_train_steps", ds_train.num_steps())
         experiment.log_parameter("num_test_steps", ds_test.num_steps())
         experiment.log_parameter("num_val_steps", ds_val.num_steps())
@@ -308,7 +352,7 @@ def train(
         print(model.normalizer.mean)
         print(model.normalizer.variance)
 
-        model.fit(
+        return model.fit(
             ds_train.tensorflow_dataset.repeat().prefetch(tf.data.AUTOTUNE),
             validation_data=ds_test.tensorflow_dataset.repeat().prefetch(tf.data.AUTOTUNE),
             epochs=config["setup"]["num_epochs"],
