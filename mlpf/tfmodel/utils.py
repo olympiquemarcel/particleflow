@@ -172,13 +172,28 @@ def delete_all_but_best_checkpoint(train_dir, dry_run):
         logging.info("Removed all checkpoints in {} except {}".format(train_dir, best_ckpt))
 
 
-def get_num_gpus(envvar="CUDA_VISIBLE_DEVICES"):
+def _get_num_gpus(envvar="CUDA_VISIBLE_DEVICES"):
     env = os.environ[envvar]
     gpus = [int(x) for x in env.split(",")]
     if len(gpus) == 1 and gpus[0] == -1:
         num_gpus = 0
     else:
         num_gpus = len(gpus)
+    return num_gpus, gpus
+
+
+def get_num_gpus():
+    if "CUDA_VISIBLE_DEVICES" in os.environ:
+        num_gpus, gpus = _get_num_gpus("CUDA_VISIBLE_DEVICES")
+    elif "ROCR_VISIBLE_DEVICES" in os.environ:
+        num_gpus, gpus = _get_num_gpus("ROCR_VISIBLE_DEVICES")
+    else:
+        logging.warning(
+            "CUDA/ROC variable is empty. \
+            If you don't have or intend to use GPUs, this message can be ignored."
+        )
+        num_gpus = 0
+        gpus = []
     return num_gpus, gpus
 
 
@@ -195,16 +210,7 @@ def get_strategy(num_cpus=None):
         tf.config.threading.set_inter_op_parallelism_threads(num_cpus)
         tf.config.threading.set_intra_op_parallelism_threads(num_cpus)
 
-    if "CUDA_VISIBLE_DEVICES" in os.environ:
-        num_gpus, gpus = get_num_gpus("CUDA_VISIBLE_DEVICES")
-    elif "ROCR_VISIBLE_DEVICES" in os.environ:
-        num_gpus, gpus = get_num_gpus("ROCR_VISIBLE_DEVICES")
-    else:
-        logging.warning(
-            "CUDA/ROC variable is empty. \
-            If you don't have or intend to use GPUs, this message can be ignored."
-        )
-        num_gpus = 0
+    num_gpus, gpus = get_num_gpus()
 
     if num_gpus > 1:
         # multiple GPUs selected
@@ -221,7 +227,7 @@ def get_strategy(num_cpus=None):
     num_batches_multiplier = 1
     if num_gpus > 1:
         num_batches_multiplier = num_gpus
-        logging.info("Multiple GPUs detected, num_batces_multiplier={}".format(num_batches_multiplier))
+        logging.info("Multiple GPUs detected, num_batches_multiplier={}".format(num_batches_multiplier))
 
     return strategy, num_gpus, num_batches_multiplier
 
@@ -368,7 +374,7 @@ def load_and_interleave(
 ):
     datasets = [mlpf_dataset_from_config(ds_name, config, split, max_events) for ds_name in dataset_names]
     ds = interleave_datasets(joint_dataset_name, split, datasets)
-    tensorflow_dataset = ds.tensorflow_dataset.map(get_map_to_supervised(config))
+    tensorflow_dataset = ds.tensorflow_dataset.map(get_map_to_supervised(config), num_parallel_calls=tf.data.AUTOTUNE)
 
     # use dynamic batching depending on the sequence length
     if config["batching"]["bucket_by_sequence_length"]:

@@ -4,9 +4,9 @@
 #SBATCH -N 8
 #SBATCH --tasks-per-node=1
 #SBATCH -p gpu
-#SBATCH --constraint=a100-80gb,ib
+#SBATCH --constraint=a100,ib
 #SBATCH --gpus-per-task=4
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=64
 
 # Job name
 #SBATCH -J raytune
@@ -58,7 +58,7 @@ echo "IP Head: $ip_head"
 echo "STARTING HEAD at $node_1"
 srun --nodes=1 --ntasks=1 -w $node_1 \
   ray start --head --node-ip-address="$node_1" --port=$port \
-  --num-cpus "${SLURM_CPUS_PER_TASK}" --num-gpus $num_gpus --block &  # mlpf/raytune/start-head.sh $ip $port &
+  --num-cpus $((SLURM_CPUS_PER_TASK)) --num-gpus $num_gpus --block &  # mlpf/raytune/start-head.sh $ip $port &
 
 sleep 10
 
@@ -69,7 +69,7 @@ do
   echo "STARTING WORKER $i at $node_i"
   srun --nodes=1 --ntasks=1 -w $node_i \
     ray start --address "$node_1":"$port" \
-    --num-cpus "${SLURM_CPUS_PER_TASK}" --num-gpus $num_gpus --block &  # mlpf/raytune/start-worker.sh $ip_head &
+    --num-cpus $((SLURM_CPUS_PER_TASK)) --num-gpus $num_gpus --block &  # mlpf/raytune/start-worker.sh $ip_head &
   sleep 5
 done
 
@@ -77,6 +77,8 @@ echo All Ray workers started.
 ##############################################################################################
 
 #### call your code below
-python3 mlpf/pipeline.py raytune -c $1 -n $2 --cpus "${SLURM_CPUS_PER_TASK}" \
-  --gpus $num_gpus --seeds --comet-exp-name particleflow-raytune #  --comet-online
+python3 mlpf/pipeline.py raytune -c $1 -n $2 --cpus $((SLURM_CPUS_PER_TASK/4)) \
+  --gpus 1 --seeds --comet-exp-name particleflow-raytune
+  # --ntrain 100 --ntest 100 #--comet-online
+
 exit
