@@ -727,7 +727,7 @@ def raytune_build_model_and_train(
     from collections import Counter
 
     from ray import tune
-    from ray.tune.integration.keras import TuneReportCheckpointCallback
+    from ray.air.integrations.keras import TuneReportCheckpointCallback
     from raytune.search_space import set_raytune_search_parameters
 
     if seeds:
@@ -885,6 +885,7 @@ def raytune(
 ):
     import ray
     from ray import tune
+    from ray.air import RunConfig
     from ray.tune.logger import TBXLoggerCallback
     from raytune.search_space import raytune_num_samples, search_space
     from raytune.utils import get_raytune_schedule, get_raytune_search_alg
@@ -910,14 +911,15 @@ def raytune(
 
     expdir = Path(cfg["raytune"]["local_dir"]) / name
     expdir.mkdir(parents=True, exist_ok=True)
+    # Copy the config ans search space files to the train dir for later reference
     shutil.copy(
         "mlpf/raytune/search_space.py",
         str(Path(cfg["raytune"]["local_dir"]) / name / "search_space.py"),
-    )  # Copy the config file to the train dir for later reference
+    )
     shutil.copy(
         config_file_path,
         str(Path(cfg["raytune"]["local_dir"]) / name / "config.yaml"),
-    )  # Copy the config file to the train dir for later reference
+    )
 
     ray.tune.ray_trial_executor.DEFAULT_GET_TIMEOUT = 1 * 60 * 60  # Avoid timeout errors
     if not local:
@@ -928,34 +930,71 @@ def raytune(
 
     sync_config = tune.SyncConfig(sync_to_driver=False)
 
-    start = datetime.now()
-    analysis = tune.run(
-        partial(
-            raytune_build_model_and_train,
-            full_config=config_file_path,
-            ntrain=ntrain,
-            ntest=ntest,
-            name=name,
-            seeds=seeds,
-            comet_online=comet_online,
-            comet_exp_name=comet_exp_name,
-            nepochs=nepochs,
-            num_cpus=cpus,
-        ),
-        config=search_space,
-        resources_per_trial={"cpu": cpus, "gpu": gpus},
+    trainable = partial(
+        raytune_build_model_and_train,
+        full_config=config_file_path,
+        ntrain=ntrain,
+        ntest=ntest,
         name=name,
-        scheduler=sched,
-        search_alg=search_alg,
-        num_samples=raytune_num_samples,
-        local_dir=cfg["raytune"]["local_dir"],
-        callbacks=[TBXLoggerCallback()],
-        log_to_file=True,
-        resume=resume,
-        max_failures=2,
-        sync_config=sync_config,
-        # stop=tune.stopper.MaximumIterationStopper(cfg["setup"]["num_epochs"]),
+        seeds=seeds,
+        comet_online=comet_online,
+        comet_exp_name=comet_exp_name,
+        nepochs=nepochs,
+        num_cpus=cpus,
     )
+
+    start = datetime.now()
+
+    # OLD WAY
+    # analysis = tune.run(
+    #     trainable,
+    #     config=search_space,
+    #     resources_per_trial={"cpu": cpus, "gpu": gpus},
+    #     name=name,
+    #     scheduler=sched,
+    #     search_alg=search_alg,
+    #     num_samples=raytune_num_samples,
+    #     local_dir=cfg["raytune"]["local_dir"],
+    #     callbacks=[TBXLoggerCallback()],
+    #     log_to_file=True,
+    #     resume=resume,
+    #     max_failures=2,
+    #     sync_config=sync_config,
+    # )
+    # END OF OLD WAY
+
+    # NEW WAY
+    tuner = tune.Tuner(
+        trainable=tune.with_resources(trainable, resources={"cpu": cpus, "gpu": gpus}),
+        param_space=search_space,
+        tune_config=tune.TuneConfig(
+            scheduler=sched,
+            search_alg=search_alg,
+            num_samples=raytune_num_samples,
+        ),
+        run_config=RunConfig(
+            name=name,
+            storage_path=cfg["raytune"]["local_dir"],
+            sync_config=sync_config,
+            max_failures=2,
+            callbacks=[TBXLoggerCallback()],
+            log_to_file=True,
+        ),
+    )
+    if resume:
+        assert tuner.can_restore(expdir), "Could not restore Tuner from {}".format(expdir)
+        tuner.restore(
+            path=expdir,
+            trainable=trainable,
+            resume_unfinished=True,
+            resume_errored=False,  # tries to resume errored trials from latest checkpoint
+            restart_errored=False,  # force restarts errored trials from scratch
+        )
+
+    result_grid = tuner.fit()
+    analysis = result_grid._experiment_analysis  # TODO: implement this without using hidden member variable
+    # END OF NEW WAY
+
     end = datetime.now()
     logging.info("Total time of tune.run(...): {}".format(end - start))
 
