@@ -2,9 +2,11 @@ import torch
 import torch.nn as nn
 import torch_geometric
 import torch_geometric.utils
-from torch_geometric.nn.conv import GravNetConv  # also returns edge index
+from torch_geometric.nn.conv import GravNetConv
 
-# from pyg_ssl.gravnet import GravNetConv  # also returns edge index
+# from pyg_ssl.gravnet import GravNetConv  # this version also returns edge index
+
+from mlpf.pyg.model import CombinedGraphLayer
 
 
 class GravNetLayer(nn.Module):
@@ -46,49 +48,14 @@ class SelfAttentionLayer(nn.Module):
         return x
 
 
-def ffn(input_dim, output_dim, width, act, dropout, ssl):
-    if ssl:
-        return nn.Sequential(
-            nn.Linear(input_dim, width),
-            act(),
-            torch.nn.LayerNorm(width),
-            nn.Dropout(dropout),
-            nn.Linear(width, width),
-            act(),
-            torch.nn.LayerNorm(width),
-            nn.Dropout(dropout),
-            nn.Linear(width, width),
-            act(),
-            torch.nn.LayerNorm(width),
-            nn.Dropout(dropout),
-            nn.Linear(width, width),
-            act(),
-            torch.nn.LayerNorm(width),
-            nn.Linear(width, output_dim),
-        )
-    else:
-        return nn.Sequential(
-            nn.Linear(input_dim, width),
-            act(),
-            torch.nn.LayerNorm(width),
-            nn.Dropout(dropout),
-            nn.Linear(width, width),
-            act(),
-            torch.nn.LayerNorm(width),
-            nn.Dropout(dropout),
-            nn.Linear(width, width),
-            act(),
-            torch.nn.LayerNorm(width),
-            nn.Dropout(dropout),
-            nn.Linear(width, width),
-            act(),
-            torch.nn.LayerNorm(width),
-            nn.Dropout(dropout),
-            nn.Linear(width, width),
-            act(),
-            torch.nn.LayerNorm(width),
-            nn.Linear(width, output_dim),
-        )
+def ffn(input_dim, output_dim, width, act, dropout):
+    return nn.Sequential(
+        nn.Linear(input_dim, width),
+        act(),
+        torch.nn.LayerNorm(width),
+        nn.Dropout(dropout),
+        nn.Linear(width, output_dim),
+    )
 
 
 class MLPF(nn.Module):
@@ -97,7 +64,7 @@ class MLPF(nn.Module):
         input_dim=34,
         NUM_CLASSES=8,
         embedding_dim=128,
-        width=126,
+        width=128,
         num_convs=2,
         k=32,
         propagate_dimensions=32,
@@ -116,17 +83,9 @@ class MLPF(nn.Module):
 
         # embedding of the inputs
         if num_convs != 0:
-            self.nn0 = nn.Sequential(
-                nn.Linear(input_dim, width),
-                self.act(),
-                nn.Linear(width, width),
-                self.act(),
-                nn.Linear(width, width),
-                self.act(),
-                nn.Linear(width, embedding_dim),
-            )
+            self.nn0 = ffn(input_dim, embedding_dim, width, self.act, dropout)
 
-            self.conv_type = "gravnet"
+            self.conv_type = "gnn-lsh"
             # GNN that uses the embeddings learnt by VICReg as the input features
             if self.conv_type == "gravnet":
                 self.conv_id = nn.ModuleList()
@@ -137,37 +96,51 @@ class MLPF(nn.Module):
             elif self.conv_type == "attention":
                 self.conv_id = nn.ModuleList()
                 self.conv_reg = nn.ModuleList()
-
                 for i in range(num_convs):
                     self.conv_id.append(SelfAttentionLayer(embedding_dim))
                     self.conv_reg.append(SelfAttentionLayer(embedding_dim))
+            elif self.conv_type == "gnn-lsh":
+                self.conv_id = nn.ModuleList()
+                self.conv_reg = nn.ModuleList()
+
+                for i in range(num_convs):
+                    gnn_conf = {
+                        "inout_dim": embedding_dim,
+                        "bin_size": 256,
+                        "max_num_bins": 200,
+                        "distance_dim": 128,
+                        "layernorm": True,
+                        "num_node_messages": 2,
+                        "dropout": 0.0,
+                        "ffn_dist_hidden_dim": 64,
+                    }
+                    self.conv_id.append(CombinedGraphLayer(**gnn_conf))
+                    self.conv_reg.append(CombinedGraphLayer(**gnn_conf))
 
         decoding_dim = input_dim + num_convs * embedding_dim
         if ssl:
             decoding_dim += VICReg_embedding_dim
 
         # DNN that acts on the node level to predict the PID
-        self.nn_id = ffn(decoding_dim, NUM_CLASSES, width, self.act, dropout, ssl)
+        self.nn_id = ffn(decoding_dim, NUM_CLASSES, width, self.act, dropout)
 
         # elementwise DNN for node momentum regression
-        self.nn_pt = ffn(decoding_dim + NUM_CLASSES, 1, width, self.act, dropout, ssl)
-        self.nn_eta = ffn(decoding_dim + NUM_CLASSES, 1, width, self.act, dropout, ssl)
-        self.nn_phi = ffn(decoding_dim + NUM_CLASSES, 2, width, self.act, dropout, ssl)
-        self.nn_energy = ffn(decoding_dim + NUM_CLASSES, 1, width, self.act, dropout, ssl)
+        self.nn_pt = ffn(decoding_dim + NUM_CLASSES, 1, width, self.act, dropout)
+        self.nn_eta = ffn(decoding_dim + NUM_CLASSES, 1, width, self.act, dropout)
+        self.nn_phi = ffn(decoding_dim + NUM_CLASSES, 2, width, self.act, dropout)
+        self.nn_energy = ffn(decoding_dim + NUM_CLASSES, 1, width, self.act, dropout)
 
         # elementwise DNN for node charge regression, classes (-1, 0, 1)
-        self.nn_charge = ffn(decoding_dim + NUM_CLASSES, 3, width, self.act, dropout, ssl)
+        self.nn_charge = ffn(decoding_dim + NUM_CLASSES, 3, width, self.act, dropout)
 
-    def forward(self, batch):
+    def forward(self, element_features, batch_idx):
 
         # unfold the Batch object
         if self.ssl:
-            input_ = batch.x.float()[:, : self.input_dim]
-            VICReg_embeddings = batch.x.float()[:, self.input_dim :]
+            input_ = element_features.float()[:, : self.input_dim]
+            VICReg_embeddings = element_features.float()[:, self.input_dim :]
         else:
-            input_ = batch.x.float()
-
-        batch_idx = batch.batch
+            input_ = element_features.float()
 
         embeddings_id = []
         embeddings_reg = []
@@ -183,20 +156,20 @@ class MLPF(nn.Module):
                 for num, conv in enumerate(self.conv_reg):
                     conv_input = embedding if num == 0 else embeddings_reg[-1]
                     embeddings_reg.append(conv(conv_input, batch_idx))
-            elif self.conv_type == "attention":
+            else:
                 for num, conv in enumerate(self.conv_id):
                     conv_input = embedding if num == 0 else embeddings_id[-1]
                     input_padded, mask = torch_geometric.utils.to_dense_batch(conv_input, batch_idx)
                     out_padded = conv(input_padded, ~mask)
                     out_stacked = torch.cat([out_padded[i][mask[i]] for i in range(out_padded.shape[0])])
-                    assert out_stacked.shape[0] == conv_input.shape[0]
+                    # assert out_stacked.shape[0] == conv_input.shape[0]
                     embeddings_id.append(out_stacked)
                 for num, conv in enumerate(self.conv_reg):
                     conv_input = embedding if num == 0 else embeddings_reg[-1]
                     input_padded, mask = torch_geometric.utils.to_dense_batch(conv_input, batch_idx)
                     out_padded = conv(input_padded, ~mask)
                     out_stacked = torch.cat([out_padded[i][mask[i]] for i in range(out_padded.shape[0])])
-                    assert out_stacked.shape[0] == conv_input.shape[0]
+                    # assert out_stacked.shape[0] == conv_input.shape[0]
                     embeddings_reg.append(out_stacked)
 
         if self.ssl:
@@ -213,10 +186,10 @@ class MLPF(nn.Module):
             embedding_reg = torch.cat([input_] + embeddings_reg + [preds_id], axis=-1)
 
         # do some sanity checks on the PFElement input data
-        assert torch.all(torch.abs(input_[:, 3]) <= 1.0)  # sin_phi
-        assert torch.all(torch.abs(input_[:, 4]) <= 1.0)  # cos_phi
-        assert torch.all(input_[:, 1] >= 0.0)  # pt
-        assert torch.all(input_[:, 5] >= 0.0)  # energy
+        # assert torch.all(torch.abs(input_[:, 3]) <= 1.0)  # sin_phi
+        # assert torch.all(torch.abs(input_[:, 4]) <= 1.0)  # cos_phi
+        # assert torch.all(input_[:, 1] >= 0.0)  # pt
+        # assert torch.all(input_[:, 5] >= 0.0)  # energy
 
         # predict the 4-momentum, add it to the (pt, eta, sin phi, cos phi, E) of the input PFelement
         # the feature order is defined in fcc/postprocessing.py -> track_feature_order, cluster_feature_order

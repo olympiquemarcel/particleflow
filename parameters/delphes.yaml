@@ -1,5 +1,7 @@
 backend: tensorflow
 
+cache: caches/delphes
+
 dataset:
   schema: delphes
   target_particles: gen
@@ -10,6 +12,7 @@ dataset:
   num_output_classes: 6
   cls_weight_by_pt: no
   reg_weight_by_pt: no
+  enable_tfds_caching: no
 
 loss:
   classification_loss_coef: 1.0
@@ -62,7 +65,7 @@ setup:
   horovod_enabled: False
   cls_output_as_logits: yes
   small_graph_opt: no
-  normalizer_cache: parameters/delphes_normalizations
+  use_normalizer: yes
 
 batching:
   # if enabled, use dynamic batching instead of the fixed-size batches configured in batch_per_gpu
