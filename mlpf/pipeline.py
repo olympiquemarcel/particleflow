@@ -201,6 +201,9 @@ def train(
     if plot_freq:
         config["callbacks"]["plot_freq"] = plot_freq
 
+    if not os.path.isdir(config["cache"]):
+        os.makedirs(config["cache"])
+
     if batch_multiplier:
         if config["batching"]["bucket_by_sequence_length"]:
             logging.info(
@@ -268,14 +271,28 @@ def train(
 
     ds_train, ds_test, ds_val = get_train_test_val_datasets(config, num_batches_multiplier, ntrain, ntest, horovod_enabled)
 
-    ds_train.tensorflow_dataset = ds_train.tensorflow_dataset.cache().prefetch(tf.data.AUTOTUNE)
-    ds_test.tensorflow_dataset = ds_test.tensorflow_dataset.cache().prefetch(tf.data.AUTOTUNE)
+    if config["dataset"]["enable_tfds_caching"]:
+        ds_train.tensorflow_dataset = ds_train.tensorflow_dataset.cache()
+        ds_test.tensorflow_dataset = ds_test.tensorflow_dataset.cache()
 
-    logging.info("ensuring dataset cache is hot")
-    for elem in ds_train.tensorflow_dataset:
-        pass
-    for elem in ds_test.tensorflow_dataset:
-        pass
+    ds_train.tensorflow_dataset = ds_train.tensorflow_dataset.prefetch(tf.data.AUTOTUNE)
+    ds_test.tensorflow_dataset = ds_test.tensorflow_dataset.prefetch(tf.data.AUTOTUNE)
+
+    if config["dataset"]["enable_tfds_caching"]:
+        logging.info("ensuring dataset cache is hot")
+        for ielem, elem in enumerate(ds_train.tensorflow_dataset):
+            if ielem < 5:
+                msk = elem[0][..., 0].numpy() != 0
+                print("features {}".format(np.sum(msk)))
+                for ifeat in range(elem[0].shape[-1]):
+                    feat = elem[0][..., ifeat].numpy()[msk]
+                    print(ifeat, feat.min(), feat.max(), np.mean(feat), np.std(feat))
+                print("targets")
+                print(elem[1])
+                print("weights")
+                print(elem[2])
+        for elem in ds_test.tensorflow_dataset:
+            pass
 
     epochs = config["setup"]["num_epochs"]
     total_steps = ds_train.num_steps() * epochs
@@ -321,16 +338,17 @@ def train(
         callbacks.append(optim_callbacks)
 
         # this may crash if the other ranks can't find this file...
-        if not os.path.isfile(config["setup"]["normalizer_cache"] + ".npz"):
-            logging.error(
-                f"Could not find normalizer cache in {config['setup']['normalizer_cache'] + '.npz'}"
-                + "run once without horovod to create cache"
-            )
-            return
+        if config["setup"]["use_normalizer"]:
+            normalizer_cache = "{}/normalizations.npz".format(config["cache"])
+            if not os.path.isfile(normalizer_cache):
+                logging.error(
+                    f"Could not find normalizer cache in {normalizer_cache}" + "run once without horovod to create cache"
+                )
+                return
 
-        cache = np.load(config["setup"]["normalizer_cache"] + ".npz", allow_pickle=True)
-        model.normalizer.mean = tf.convert_to_tensor(cache["mean"])
-        model.normalizer.variance = tf.convert_to_tensor(cache["variance"])
+            cache = np.load(normalizer_cache, allow_pickle=True)
+            model.normalizer.mean = tf.convert_to_tensor(cache["mean"])
+            model.normalizer.variance = tf.convert_to_tensor(cache["variance"])
 
         model.fit(
             ds_train.tensorflow_dataset.repeat(),
@@ -361,22 +379,26 @@ def train(
 
             callbacks.append(optim_callbacks)
 
-            if not os.path.isfile(config["setup"]["normalizer_cache"] + ".npz"):
-                logging.info(
-                    "Could not find normalizer cache in {}, recreating".format(config["setup"]["normalizer_cache"] + ".npz")
-                )
-                model.normalizer.adapt(ds_train.tensorflow_dataset.map(lambda X, y, w: X[:, :, 1:]))
-                print(model.normalizer.mean)
-                print(model.normalizer.variance)
-                np.savez(
-                    config["setup"]["normalizer_cache"],
-                    mean=model.normalizer.mean.numpy(),
-                    variance=model.normalizer.variance.numpy(),
-                )
+            if config["setup"]["use_normalizer"]:
+                normalizer_cache = "{}/normalizations.npz".format(config["cache"])
+                if not os.path.isfile(normalizer_cache):
+                    logging.info(f"Could not find normalizer cache in {normalizer_cache}, recreating")
+                    model.normalizer.adapt(
+                        ds_train.tensorflow_dataset.prefetch(tf.data.AUTOTUNE).map(
+                            lambda X, y, w: X[:, :, 1:], num_parallel_calls=tf.data.AUTOTUNE
+                        )
+                    )
+                    print(model.normalizer.mean)
+                    print(model.normalizer.variance)
+                    np.savez(
+                        normalizer_cache,
+                        mean=model.normalizer.mean.numpy(),
+                        variance=model.normalizer.variance.numpy(),
+                    )
 
-            cache = np.load(config["setup"]["normalizer_cache"] + ".npz", allow_pickle=True)
-            model.normalizer.mean = tf.convert_to_tensor(cache["mean"])
-            model.normalizer.variance = tf.convert_to_tensor(cache["variance"])
+                cache = np.load(normalizer_cache, allow_pickle=True)
+                model.normalizer.mean = tf.convert_to_tensor(cache["mean"])
+                model.normalizer.variance = tf.convert_to_tensor(cache["variance"])
 
             model.fit(
                 ds_train.tensorflow_dataset.repeat(),
@@ -427,16 +449,18 @@ def evaluate(config, train_dir, weights, customize, nevents):
 
     model, _, initial_epoch = model_scope(config, 1, weights=weights)
 
-    print("before loading")
-    print(model.normalizer.mean)
-    print(model.normalizer.variance)
+    if config["setup"]["use_normalizer"]:
+        print("before loading")
+        print(model.normalizer.mean)
+        print(model.normalizer.variance)
 
-    cache = np.load(config["setup"]["normalizer_cache"] + ".npz", allow_pickle=True)
-    model.normalizer.mean = tf.convert_to_tensor(cache["mean"])
-    model.normalizer.variance = tf.convert_to_tensor(cache["variance"])
-    print("after loading")
-    print(model.normalizer.mean)
-    print(model.normalizer.variance)
+        normalizer_cache_path = "{}/normalizations.npz".format(config["cache"])
+        cache = np.load(normalizer_cache_path, allow_pickle=True)
+        model.normalizer.mean = tf.convert_to_tensor(cache["mean"])
+        model.normalizer.variance = tf.convert_to_tensor(cache["variance"])
+        print("after loading")
+        print(model.normalizer.mean)
+        print(model.normalizer.variance)
 
     for dsname in config["evaluation_datasets"]:
         val_ds = config["evaluation_datasets"][dsname]
@@ -510,16 +534,18 @@ def infer(config, train_dir, weights, bs, customize, nevents, verbose, num_runs,
 
     model, _, initial_epoch = model_scope(config, 1, weights=weights)
 
-    print("before loading")
-    print("model.normalizer.mean:", model.normalizer.mean)
-    print("model.normalizer.variance:", model.normalizer.variance)
+    if config["setup"]["use_normalizer"]:
+        print("before loading")
+        print("model.normalizer.mean:", model.normalizer.mean)
+        print("model.normalizer.variance:", model.normalizer.variance)
 
-    cache = np.load(config["setup"]["normalizer_cache"] + ".npz", allow_pickle=True)
-    model.normalizer.mean = tf.convert_to_tensor(cache["mean"])
-    model.normalizer.variance = tf.convert_to_tensor(cache["variance"])
-    print("after loading")
-    print("model.normalizer.mean:", model.normalizer.mean)
-    print("model.normalizer.variance:", model.normalizer.variance)
+        normalizer_cache_path = "{}/normalizations.npz".format(config["cache"])
+        cache = np.load(normalizer_cache_path, allow_pickle=True)
+        model.normalizer.mean = tf.convert_to_tensor(cache["mean"])
+        model.normalizer.variance = tf.convert_to_tensor(cache["variance"])
+        print("after loading")
+        print("model.normalizer.mean:", model.normalizer.mean)
+        print("model.normalizer.variance:", model.normalizer.variance)
 
     num_events = nevents if nevents >= 0 else config["validation_num_events"]
     ds_val = mlpf_dataset_from_config(
