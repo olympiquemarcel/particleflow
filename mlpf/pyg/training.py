@@ -1162,10 +1162,10 @@ def run_hpo(config, args):
                 sync_config=ray.train.SyncConfig(sync_artifacts=True),
             ),
         )
-    start = datetime.now()
+    start = time.time()
     _logger.info("Starting tuner.fit()")
     result_grid = tuner.fit()
-    end = datetime.now()
+    end = time.time()
 
     print("Number of errored trials: {}".format(result_grid.num_errors))
     print("Number of terminated (not errored) trials: {}".format(result_grid.num_terminated))
